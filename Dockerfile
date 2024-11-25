@@ -1,52 +1,60 @@
 # Build base image
-FROM python:3.8-slim as python-base
+FROM python:3.8-slim AS python-base
 
-ENV PYTHONUNBUFFERED = 1 \
-    PYTHONDONTWRITEBYTECODE = 1 \
-    PIP_NO_CACHE_DIR = off \
-    PIP_DISABLE_PIP_VERSION_CHECK = on \
-    PIP_DEFAULT_TIMEOUT = 100 \
-    POETRY_VERSION = 1.1.14 \
-    POETRY_HOME = "/opt/poetry" \
-    POETRY_VIRTUALENVS_IN_PROJECT = true \
-    POETRY_NO_INTERACTION = 1 \
-    PYSETUP_PATH = "/opt/pysetup" \
-    VENV_PATH = "/opt/pysetup/.venv"
-
-ENV PATH = "$POETRY_HOME/bin:$VENV_PATH/bin:$PATH"
-
+# Set environment variables
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=off \
+    PIP_DISABLE_PIP_VERSION_CHECK=on \
+    PIP_DEFAULT_TIMEOUT=100 \
+    POETRY_VERSION=1.1.14 \
+    POETRY_HOME="/opt/poetry" \
+    POETRY_VIRTUALENVS_IN_PROJECT=true \
+    POETRY_NO_INTERACTION=1 \
+    PYSETUP_PATH="/opt/pysetup" \
+    VENV_PATH="/opt/pysetup/.venv" \
+    PATH="$POETRY_HOME/bin:$VENV_PATH/bin:$PATH"
 
 # Build dev image
-FROM python-base as dev-base
+FROM python-base AS dev-base
 
-RUN : \
-    && apt-get update \
-    && DEBIAN_FRONTEND=noninteractive apt-get install -y \
-      --no-install-recommends \
-      curl \
-      build-essential \
-      libsndfile1 \
-      libsndfile1-dev
+# Install dependencies
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    curl \
+    build-essential \
+    libsndfile1 \
+    libsndfile1-dev && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
-ENV GET_POETRY_IGNORE_DEPRECATION=1
+# Install Poetry
+RUN curl -sSL https://install.python-poetry.org | python && \
+    mv /root/.local/bin/poetry /usr/local/bin/poetry
 
-RUN curl -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/get-poetry.py \
-    | POETRY_VERSION=1.1.14 python
+# Verify Poetry Installation
+RUN poetry --version
 
-ENV PATH="${PATH}:/root/.poetry/bin"
-
+# Copy project dependency files
 COPY poetry.lock pyproject.toml ./
 
-RUN poetry install
+# Install project dependencies with Poetry
+RUN poetry install --no-root
 
+# Build production image
+FROM python-base AS production
 
-#Build production image
-FROM python-base as production
-
+# Copy dependencies and setup files from dev-base
 COPY --from=dev-base $PYSETUP_PATH $PYSETUP_PATH
 
+# Copy application code
 COPY . /app
 
-EXPOSE $PORT
+# Set the working directory
+WORKDIR /app
 
-CMD gunicorn --workers=4 --bind 0.0.0.0:$PORT app:app
+# Expose the port
+EXPOSE ${PORT:-8000}
+
+# Command to run the app using Gunicorn
+CMD ["gunicorn", "--workers=4", "--bind", "0.0.0.0:8000", "app:app"]
